@@ -12,7 +12,8 @@ extern NSString * const kEXUpdatesEmbeddedBundleFileType;
 @interface EXUpdatesEmbeddedAppLoader : EXUpdatesAppLoader
 
 + (nullable EXUpdatesUpdate *)embeddedManifest;
-- (void)loadUpdateFromEmbeddedManifest;
+- (void)loadUpdateFromEmbeddedManifestWithSuccess:(EXUpdatesAppLoaderSuccessBlock)success
+                                            error:(EXUpdatesAppLoaderErrorBlock)error;
 
 @end
 

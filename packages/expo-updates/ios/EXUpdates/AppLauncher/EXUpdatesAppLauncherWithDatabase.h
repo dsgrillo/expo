@@ -6,13 +6,15 @@
 NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^EXUpdatesAppLauncherCompletionBlock)(NSError * _Nullable error, BOOL success);
+typedef void (^EXUpdatesAppLauncherUpdateCompletionBlock)(NSError * _Nullable error, EXUpdatesUpdate * _Nullable launchableUpdate);
 
 @interface EXUpdatesAppLauncherWithDatabase : NSObject <EXUpdatesAppLauncher>
 
 - (void)launchUpdateWithSelectionPolicy:(id<EXUpdatesSelectionPolicy>)selectionPolicy
                              completion:(EXUpdatesAppLauncherCompletionBlock)completion;
 
-+ (nullable EXUpdatesUpdate *)launchableUpdateWithSelectionPolicy:(id<EXUpdatesSelectionPolicy>)selectionPolicy;
++ (void)launchableUpdateWithSelectionPolicy:(id<EXUpdatesSelectionPolicy>)selectionPolicy
+                                 completion:(EXUpdatesAppLauncherUpdateCompletionBlock)completion;
 
 @end
 

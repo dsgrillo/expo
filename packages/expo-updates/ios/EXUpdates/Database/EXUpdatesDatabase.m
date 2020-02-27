@@ -24,7 +24,7 @@ static NSString * const kEXUpdatesDatabaseFilename = @"expo.db";
 - (instancetype)init
 {
   if (self = [super init]) {
-    _lock = [[NSLock alloc] init];
+    _databaseQueue = dispatch_queue_create("expo.database.DatabaseQueue", DISPATCH_QUEUE_SERIAL);
   }
   return self;
 }
@@ -90,6 +90,7 @@ static NSString * const kEXUpdatesDatabaseFilename = @"expo.db";
 - (BOOL)_initializeDatabase:(NSError **)error
 {
   NSAssert(_db, @"Missing database handle");
+  dispatch_assert_queue(_databaseQueue);
 
   NSString * const createTableStmts = @"\
    PRAGMA foreign_keys = ON;\
@@ -433,6 +434,7 @@ static NSString * const kEXUpdatesDatabaseFilename = @"expo.db";
 - (nullable NSArray<NSDictionary *> *)_executeSql:(NSString *)sql withArgs:(nullable NSArray *)args error:(NSError ** _Nullable)error
 {
   NSAssert(_db, @"Missing database handle");
+  dispatch_assert_queue(_databaseQueue);
   sqlite3_stmt *stmt;
   if (sqlite3_prepare_v2(_db, [sql UTF8String], -1, &stmt, NULL) != SQLITE_OK) {
     if (error != nil) {

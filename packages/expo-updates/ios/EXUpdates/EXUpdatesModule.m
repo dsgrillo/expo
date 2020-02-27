@@ -12,9 +12,6 @@
 
 @property (nonatomic, weak) UMModuleRegistry *moduleRegistry;
 
-@property (nonatomic, strong) UMPromiseResolveBlock fetchUpdateResolver;
-@property (nonatomic, strong) UMPromiseRejectBlock fetchUpdateRejecter;
-
 @end
 
 @implementation EXUpdatesModule
@@ -91,54 +88,22 @@ UM_EXPORT_METHOD_AS(fetchUpdateAsync,
     reject(@"ERR_UPDATES_FETCH", @"The updates module controller has not been properly initialized. If you're in development mode, you cannot fetch updates. Otherwise, make sure you have called [[EXUpdatesAppController sharedInstance] start].", nil);
     return;
   }
-  
-  if (_fetchUpdateResolver || _fetchUpdateRejecter) {
-    reject(@"ERR_UPDATES_FETCH", @"An update is already being fetched. Wait for the first call to `fetchUpdateAsync()` to resolve before calling it again.", nil);
-    return;
-  }
-  
-  _fetchUpdateResolver = resolve;
-  _fetchUpdateRejecter = reject;
 
   EXUpdatesRemoteAppLoader *remoteAppLoader = [[EXUpdatesRemoteAppLoader alloc] init];
-  remoteAppLoader.delegate = self;
-  [remoteAppLoader loadUpdateFromUrl:[EXUpdatesConfig sharedInstance].remoteUrl];
-}
-
-# pragma mark - EXUpdatesAppLoaderDelegate
-
-- (BOOL)appLoader:(EXUpdatesAppLoader *)appLoader shouldStartLoadingUpdate:(EXUpdatesUpdate *)update
-{
-  EXUpdatesUpdate *launchedUpdate = [EXUpdatesAppController sharedInstance].launchedUpdate;
-  id<EXUpdatesSelectionPolicy> selectionPolicy = [EXUpdatesAppController sharedInstance].selectionPolicy;
-  return [selectionPolicy shouldLoadNewUpdate:update withLaunchedUpdate:launchedUpdate];
-}
-
-- (void)appLoader:(EXUpdatesAppLoader *)appLoader didFinishLoadingUpdate:(nullable EXUpdatesUpdate *)update
-{
-  if (_fetchUpdateResolver) {
+  [remoteAppLoader loadUpdateFromUrl:[EXUpdatesConfig sharedInstance].remoteUrl success:^(EXUpdatesUpdate * _Nullable update) {
     if (update) {
-      _fetchUpdateResolver(@{
+      resolve(@{
         @"isNew": @(YES),
         @"manifest": update.rawManifest
       });
     } else {
-      _fetchUpdateResolver(@{
+      resolve(@{
         @"isNew": @(NO)
       });
     }
-  }
-  _fetchUpdateResolver = nil;
-  _fetchUpdateRejecter = nil;
-}
-
-- (void)appLoader:(EXUpdatesAppLoader *)appLoader didFailWithError:(NSError *)error
-{
-  if (_fetchUpdateRejecter) {
-    _fetchUpdateRejecter(@"ERR_UPDATES_FETCH", @"Failed to download new update", error);
-  }
-  _fetchUpdateResolver = nil;
-  _fetchUpdateRejecter = nil;
+  } error:^(NSError * _Nonnull error) {
+    reject(@"ERR_UPDATES_FETCH", @"Failed to download new update", error);
+  }];
 }
 
 @end

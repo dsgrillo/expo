@@ -9,6 +9,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface EXUpdatesAppLoader ()
 
 @property (nonatomic, strong) EXUpdatesUpdate *updateManifest;
+@property (nonatomic, copy) EXUpdatesAppLoaderSuccessBlock successBlock;
+@property (nonatomic, copy) EXUpdatesAppLoaderErrorBlock errorBlock;
 
 - (void)startLoadingFromManifest:(EXUpdatesUpdate *)updateManifest;
 - (void)handleAssetDownloadAlreadyExists:(EXUpdatesAsset *)asset;

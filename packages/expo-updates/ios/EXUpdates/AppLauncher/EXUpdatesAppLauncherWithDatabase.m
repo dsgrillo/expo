@@ -40,16 +40,20 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
   return self;
 }
 
-+ (nullable EXUpdatesUpdate *)launchableUpdateWithSelectionPolicy:(id<EXUpdatesSelectionPolicy>)selectionPolicy
++ (void)launchableUpdateWithSelectionPolicy:(id<EXUpdatesSelectionPolicy>)selectionPolicy
+                                 completion:(EXUpdatesAppLauncherUpdateCompletionBlock)completion
 {
   EXUpdatesDatabase *database = [EXUpdatesAppController sharedInstance].database;
-  NSError *error;
-  NSArray<EXUpdatesUpdate *> *launchableUpdates = [database launchableUpdatesWithError:&error];
-  if (!launchableUpdates) {
-    NSLog(@"Could not select updates from database: %@", error.localizedDescription);
-    return nil;
-  }
-  return [selectionPolicy launchableUpdateWithUpdates:launchableUpdates];
+  dispatch_async(database.databaseQueue, ^{
+    NSError *error;
+    NSArray<EXUpdatesUpdate *> *launchableUpdates = [database launchableUpdatesWithError:&error];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+      if (!launchableUpdates) {
+        completion(error, nil);
+      }
+      completion(nil, [selectionPolicy launchableUpdateWithUpdates:launchableUpdates]);
+    });
+  });
 }
 
 - (void)launchUpdateWithSelectionPolicy:(id<EXUpdatesSelectionPolicy>)selectionPolicy
@@ -57,23 +61,32 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
 {
   NSAssert(!_completion, @"EXUpdatesAppLauncher:launchUpdateWithSelectionPolicy:successBlock should not be called twice on the same instance");
   _completion = completion;
-  if (!_launchedUpdate) {
-    _launchedUpdate = [[self class] launchableUpdateWithSelectionPolicy:selectionPolicy];
 
-    if (!_launchedUpdate) {
-      _completion([NSError errorWithDomain:kEXUpdatesAppLauncherErrorDomain code:1011 userInfo:@{NSLocalizedDescriptionKey: @"No launchable updates found in database"}], NO);
-      _completion = nil;
-      return;
-    }
+  if (!_launchedUpdate) {
+    [[self class] launchableUpdateWithSelectionPolicy:selectionPolicy completion:^(NSError * _Nullable error, EXUpdatesUpdate * _Nullable launchableUpdate) {
+      if (error) {
+        if (self->_completion) {
+          self->_completion([NSError errorWithDomain:kEXUpdatesAppLauncherErrorDomain code:1011 userInfo:@{NSLocalizedDescriptionKey: @"No launchable updates found in database", NSUnderlyingErrorKey: error}], NO);
+        }
+      } else if (launchableUpdate) {
+        self->_launchedUpdate = launchableUpdate;
+        [self _ensureAllAssetsExist];
+      }
+    }];
+  } else {
+    [self _ensureAllAssetsExist];
   }
-  
+}
+
+- (void)_ensureAllAssetsExist
+{
   _assetFilesMap = [NSMutableDictionary new];
   NSURL *updatesDirectory = [EXUpdatesAppController sharedInstance].updatesDirectory;
 
   [_lock lock];
   if (_launchedUpdate) {
     for (EXUpdatesAsset *asset in _launchedUpdate.assets) {
-      if ([self ensureAssetExists:asset]) {
+      if ([self _ensureAssetExists:asset]) {
         NSURL *assetLocalUrl = [updatesDirectory URLByAppendingPathComponent:asset.filename];
         if (asset.isLaunchAsset) {
           _launchAssetUrl = assetLocalUrl;
@@ -93,7 +106,7 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
   [_lock unlock];
 }
 
-- (BOOL)ensureAssetExists:(EXUpdatesAsset *)asset
+- (BOOL)_ensureAssetExists:(EXUpdatesAsset *)asset
 {
   NSURL *assetLocalUrl = [[EXUpdatesAppController sharedInstance].updatesDirectory URLByAppendingPathComponent:asset.filename];
   BOOL assetFileExists = [[NSFileManager defaultManager] fileExistsAtPath:[assetLocalUrl path]];
@@ -159,13 +172,14 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
   [_lock lock];
   _assetsToDownloadFinished++;
 
-  NSError *error;
-  [[EXUpdatesAppController sharedInstance].database updateAsset:asset error:&error];
-  if (error) {
-    [_lock unlock];
-    [self _assetDownloadDidFinish:asset withError:error];
-    return;
-  }
+  EXUpdatesDatabase *database = [EXUpdatesAppController sharedInstance].database;
+  dispatch_async(database.databaseQueue, ^{
+    NSError *error;
+    [database updateAsset:asset error:&error];
+    if (error) {
+      NSLog(@"Could not write data for downloaded asset to database: %@", error.localizedDescription);
+    }
+  });
 
   if (asset.isLaunchAsset) {
     _launchAssetUrl = localUrl;

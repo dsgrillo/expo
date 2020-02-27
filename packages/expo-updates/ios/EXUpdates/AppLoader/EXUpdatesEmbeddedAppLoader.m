@@ -34,8 +34,11 @@ NSString * const kEXUpdatesEmbeddedBundleFileType = @"bundle";
   return embeddedManifest;
 }
 
-- (void)loadUpdateFromEmbeddedManifest
+- (void)loadUpdateFromEmbeddedManifestWithSuccess:(EXUpdatesAppLoaderSuccessBlock)success
+                                            error:(EXUpdatesAppLoaderErrorBlock)error
 {
+  self.successBlock = success;
+  self.errorBlock = error;
   [self startLoadingFromManifest:[[self class] embeddedManifest]];
 }
 
@@ -60,6 +63,8 @@ NSString * const kEXUpdatesEmbeddedBundleFileType = @"bundle";
 }
 
 - (void)loadUpdateFromUrl:(NSURL *)url
+                  success:(EXUpdatesAppLoaderSuccessBlock)success
+                    error:(EXUpdatesAppLoaderErrorBlock)error
 {
   @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:@"Should not call EXUpdatesEmbeddedAppLoader#loadUpdateFromUrl" userInfo:nil];
 }

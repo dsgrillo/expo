@@ -18,7 +18,7 @@ typedef void (^EXUpdatesAppControllerRelaunchCompletionBlock)(BOOL success);
 
 @end
 
-@interface EXUpdatesAppController : NSObject <EXUpdatesAppLoaderDelegate>
+@interface EXUpdatesAppController : NSObject
 
 /**
  Delegate which will be notified when EXUpdates has an update ready to launch and

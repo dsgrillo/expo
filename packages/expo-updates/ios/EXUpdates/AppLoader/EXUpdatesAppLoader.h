@@ -4,21 +4,14 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@class EXUpdatesAppLoader;
-
-@protocol EXUpdatesAppLoaderDelegate <NSObject>
-
-- (BOOL)appLoader:(EXUpdatesAppLoader *)appLoader shouldStartLoadingUpdate:(EXUpdatesUpdate *)update;
-- (void)appLoader:(EXUpdatesAppLoader *)appLoader didFinishLoadingUpdate:(nullable EXUpdatesUpdate *)update;
-- (void)appLoader:(EXUpdatesAppLoader *)appLoader didFailWithError:(NSError *)error;
-
-@end
+typedef void (^EXUpdatesAppLoaderSuccessBlock)(EXUpdatesUpdate * _Nullable update);
+typedef void (^EXUpdatesAppLoaderErrorBlock)(NSError *error);
 
 @interface EXUpdatesAppLoader : NSObject
 
-@property (nonatomic, weak) id<EXUpdatesAppLoaderDelegate> delegate;
-
-- (void)loadUpdateFromUrl:(NSURL *)url;
+- (void)loadUpdateFromUrl:(NSURL *)url
+                  success:(EXUpdatesAppLoaderSuccessBlock)success
+                    error:(EXUpdatesAppLoaderErrorBlock)error;
 
 @end
 

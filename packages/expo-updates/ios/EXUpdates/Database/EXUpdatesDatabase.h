@@ -11,7 +11,7 @@ typedef NS_ENUM(NSInteger, EXUpdatesDatabaseHashType) {
 
 @interface EXUpdatesDatabase : NSObject
 
-@property (nonatomic, readonly) NSLock *lock;
+@property (nonatomic, strong) dispatch_queue_t databaseQueue;
 
 - (BOOL)openDatabaseWithError:(NSError ** _Nullable)error;
 - (void)closeDatabase;

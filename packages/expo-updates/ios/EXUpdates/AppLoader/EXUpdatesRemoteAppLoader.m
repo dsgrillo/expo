@@ -24,12 +24,16 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)loadUpdateFromUrl:(NSURL *)url
+                  success:(EXUpdatesAppLoaderSuccessBlock)success
+                    error:(EXUpdatesAppLoaderErrorBlock)error
 {
+  self.successBlock = success;
+  self.errorBlock = error;
   [_downloader downloadManifestFromURL:url successBlock:^(EXUpdatesUpdate *update) {
     [self startLoadingFromManifest:update];
   } errorBlock:^(NSError *error, NSURLResponse *response) {
-    if (self.delegate) {
-      [self.delegate appLoader:self didFailWithError:error];
+    if (self.errorBlock) {
+      self.errorBlock(error);
     }
   }];
 }
