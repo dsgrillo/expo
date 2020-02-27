@@ -447,8 +447,8 @@ export async function test(t) {
       const testChannelGroupId = 'test-channel-group-id';
       const testChannelGroup = { name: 'Test channel group' };
 
-      t.describe('getNotificationChannelAsync()', () => {
-        t.it('returns null if there is no such channel', async () => {
+      t.describe('getNotificationChannelGroupAsync()', () => {
+        t.it('returns null if there is no such channel group', async () => {
           const channelGroup = await Notifications.getNotificationChannelGroupAsync(
             'non-existent-channel-group-id'
           );
@@ -456,7 +456,7 @@ export async function test(t) {
         });
 
         if (Platform.OS === 'android' && Device.platformApiLevel >= 26) {
-          t.it('returns an object if there is such channel', async () => {
+          t.it('returns an object if there is such channel group', async () => {
             await Notifications.setNotificationChannelGroupAsync(
               testChannelGroupId,
               testChannelGroup
@@ -477,7 +477,7 @@ export async function test(t) {
             t.expect(channels).toEqual(t.jasmine.any(Array));
           });
 
-          t.it('returns existing channels', async () => {
+          t.it('returns existing channel groups', async () => {
             const channel = await Notifications.setNotificationChannelGroupAsync(
               testChannelGroupId,
               testChannelGroup
@@ -544,7 +544,7 @@ export async function test(t) {
             );
           });
 
-          t.it('updates a channel', async () => {
+          t.it('updates a channel group', async () => {
             await Notifications.setNotificationChannelGroupAsync(testChannelGroupId, {
               name: 'Name before change',
             });
