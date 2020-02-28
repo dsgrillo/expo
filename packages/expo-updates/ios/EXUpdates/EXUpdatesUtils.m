@@ -14,6 +14,15 @@ static NSString * const kEXUpdatesUtilsErrorDomain = @"EXUpdatesUtils";
 
 @implementation EXUpdatesUtils
 
++ (void)runBlockOnMainThread:(void (^)(void))block
+{
+  if ([NSThread isMainThread]) {
+    block();
+  } else {
+    dispatch_async(dispatch_get_main_queue(), block);
+  }
+}
+
 + (NSString *)sha256WithData:(NSData *)data
 {
   uint8_t digest[CC_SHA256_DIGEST_LENGTH];

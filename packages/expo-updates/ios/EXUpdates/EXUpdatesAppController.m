@@ -213,9 +213,9 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
 
   _hasLaunched = YES;
   if (self->_delegate) {
-    dispatch_async(dispatch_get_main_queue(), ^{
+    [EXUpdatesUtils runBlockOnMainThread:^{
       [self->_delegate appController:self didStartWithSuccess:YES];
-    });
+    }];
   }
 }
 
@@ -330,9 +330,9 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
   [launcher launchUpdateWithFatalError:error];
 
   if (_delegate) {
-    dispatch_async(dispatch_get_main_queue(), ^{
+    [EXUpdatesUtils runBlockOnMainThread:^{
       [self->_delegate appController:self didStartWithSuccess:self.launchAssetUrl != nil];
-    });
+    }];
   }
 }
 
