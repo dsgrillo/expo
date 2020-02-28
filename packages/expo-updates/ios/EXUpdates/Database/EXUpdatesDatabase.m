@@ -267,19 +267,29 @@ static NSString * const kEXUpdatesDatabaseFilename = @"expo.db";
               error:error];
 }
 
-- (void)markUpdateForDeletionWithId:(NSUUID *)updateId error:(NSError ** _Nullable)error
+# pragma mark - delete
+
+- (void)deleteUpdates:(NSArray<EXUpdatesUpdate *> *)updates error:(NSError ** _Nullable)error
 {
-  NSString *sql = [NSString stringWithFormat:@"UPDATE updates SET keep = 0, status = %li WHERE id = ?1;", (long)EXUpdatesUpdateStatusUnused];
-  [self _executeSql:sql withArgs:@[updateId] error:error];
+  sqlite3_exec(_db, "BEGIN;", NULL, NULL, NULL);
+
+  NSString * const sql = @"DELETE FROM updates WHERE id = ?1;";
+  for (EXUpdatesUpdate *update in updates) {
+    if ([self _executeSql:sql withArgs:@[update.updateId] error:error] == nil) {
+      sqlite3_exec(_db, "ROLLBACK;", NULL, NULL, NULL);
+      return;
+    }
+  }
+
+  sqlite3_exec(_db, "COMMIT;", NULL, NULL, NULL);
 }
 
-- (nullable NSArray<NSDictionary *> *)markUnusedAssetsForDeletionWithError:(NSError ** _Nullable)error
+- (nullable NSArray<EXUpdatesAsset *> *)deleteUnusedAssetsWithError:(NSError ** _Nullable)error
 {
   // the simplest way to mark the assets we want to delete
   // is to mark all assets for deletion, then go back and unmark
   // those assets in updates we want to keep
-  // this is safe as long as we have a lock and nothing else is happening
-  // in the database during the execution of this method
+  // this is safe as long as we do this inside of a transaction
 
   sqlite3_exec(_db, "BEGIN;", NULL, NULL, NULL);
 
@@ -300,28 +310,27 @@ static NSString * const kEXUpdatesDatabaseFilename = @"expo.db";
     return nil;
   }
 
-  sqlite3_exec(_db, "COMMIT;", NULL, NULL, NULL);
-
   NSString * const selectSql = @"SELECT * FROM assets WHERE marked_for_deletion = 1;";
-  return [self _executeSql:selectSql withArgs:nil error:error];
-}
-
-- (void)deleteAssetsWithIds:(NSArray<NSNumber *> *)assetIds error:(NSError ** _Nullable)error
-{
-  NSMutableArray<NSString *> *assetIdStrings = [NSMutableArray new];
-  for (NSNumber *assetId in assetIds) {
-    [assetIdStrings addObject:[assetId stringValue]];
+  NSArray<NSDictionary *> *rows = [self _executeSql:selectSql withArgs:nil error:error];
+  if (!rows) {
+    sqlite3_exec(_db, "ROLLBACK;", NULL, NULL, NULL);
+    return nil;
   }
 
-  NSString *sql = [NSString stringWithFormat:@"DELETE FROM assets WHERE id IN (%@);",
-                   [assetIdStrings componentsJoinedByString:@", "]];
-  [self _executeSql:sql withArgs:nil error:error];
-}
+  NSMutableArray *assets = [NSMutableArray new];
+  for (NSDictionary *row in rows) {
+    [assets addObject:[self _assetWithRow:row]];
+  }
 
-- (void)deleteUnusedUpdatesWithError:(NSError ** _Nullable)error
-{
-  NSString * const sql = @"DELETE FROM updates WHERE keep = 0;";
-  [self _executeSql:sql withArgs:nil error:error];
+  NSString * const deleteSql = @"DELETE FROM assets WHERE marked_for_deletion = 1;";
+  if ([self _executeSql:deleteSql withArgs:nil error:error] == nil) {
+    sqlite3_exec(_db, "ROLLBACK;", NULL, NULL, NULL);
+    return nil;
+  }
+
+  sqlite3_exec(_db, "COMMIT;", NULL, NULL, NULL);
+
+  return assets;
 }
 
 # pragma mark - select
@@ -373,34 +382,9 @@ static NSString * const kEXUpdatesDatabaseFilename = @"expo.db";
   }
 }
 
-- (nullable EXUpdatesAsset *)launchAssetWithUpdateId:(NSUUID *)updateId error:(NSError ** _Nullable)error
-{
-  NSString * const sql = @"SELECT url, type, relative_path, metadata\
-  FROM updates\
-  INNER JOIN assets ON updates.launch_asset_id = assets.id\
-  WHERE updates.id = ?1;";
-
-  NSArray<NSDictionary *> *rows = [self _executeSql:sql withArgs:@[updateId] error:error];
-  if (!rows || ![rows count]) {
-    return nil;
-  } else {
-    if ([rows count] > 1) {
-      NSLog(@"returned multiple updates with the same ID in launchAssetUrlWithUpdateId");
-    }
-    NSDictionary *row = rows[0];
-    id metadata = row[@"metadata"];
-    NSURL *url = [NSURL URLWithString:row[@"url"]];
-    EXUpdatesAsset *asset = [[EXUpdatesAsset alloc] initWithUrl:url type:row[@"type"]];
-    asset.filename = row[@"relative_path"];
-    asset.metadata = [NSNull null] ? nil : metadata;
-    asset.isLaunchAsset = YES;
-    return asset;
-  }
-}
-
 - (nullable NSArray<EXUpdatesAsset *> *)assetsWithUpdateId:(NSUUID *)updateId error:(NSError ** _Nullable)error
 {
-  NSString * const sql = @"SELECT asset_id, url, type, relative_path, assets.metadata, launch_asset_id\
+  NSString * const sql = @"SELECT assets.id, url, type, relative_path, assets.metadata, launch_asset_id\
   FROM assets\
   INNER JOIN updates_assets ON updates_assets.asset_id = assets.id\
   INNER JOIN updates ON updates_assets.update_id = updates.id\
@@ -414,16 +398,7 @@ static NSString * const kEXUpdatesDatabaseFilename = @"expo.db";
   NSMutableArray<EXUpdatesAsset *> *assets = [NSMutableArray arrayWithCapacity:rows.count];
 
   for (NSDictionary *row in rows) {
-    id launchAssetId = row[@"launch_asset_id"];
-    id metadata = row[@"metadata"];
-    NSURL *url = [NSURL URLWithString:row[@"url"]];
-    EXUpdatesAsset *asset = [[EXUpdatesAsset alloc] initWithUrl:url type:row[@"type"]];
-    asset.filename = row[@"relative_path"];
-    asset.metadata = metadata == [NSNull null] ? nil : metadata;
-    asset.isLaunchAsset = (launchAssetId && [launchAssetId isKindOfClass:[NSNumber class]])
-      ? [(NSNumber *)launchAssetId isEqualToNumber:(NSNumber *)row[@"asset_id"]]
-      : NO;
-    [assets addObject:asset];
+    [assets addObject:[self _assetWithRow:row]];
   }
 
   return assets;
@@ -575,7 +550,7 @@ static NSString * const kEXUpdatesDatabaseFilename = @"expo.db";
   id metadata = nil;
   id rowMetadata = row[@"metadata"];
   if ([rowMetadata isKindOfClass:[NSString class]]) {
-    metadata = [NSJSONSerialization JSONObjectWithData:[(NSString *)row[@"metadata"] dataUsingEncoding:NSUTF8StringEncoding] options:kNilOptions error:&error];
+    metadata = [NSJSONSerialization JSONObjectWithData:[(NSString *)rowMetadata dataUsingEncoding:NSUTF8StringEncoding] options:kNilOptions error:&error];
     NSAssert(!error && metadata && [metadata isKindOfClass:[NSDictionary class]], @"Update metadata should be a valid JSON object");
   }
   EXUpdatesUpdate *update = [EXUpdatesUpdate updateWithId:row[@"id"]
@@ -585,6 +560,28 @@ static NSString * const kEXUpdatesDatabaseFilename = @"expo.db";
                                                    status:(EXUpdatesUpdateStatus)[(NSNumber *)row[@"status"] integerValue]
                                                      keep:[(NSNumber *)row[@"keep"] boolValue]];
   return update;
+}
+
+- (EXUpdatesAsset *)_assetWithRow:(NSDictionary *)row
+{
+  NSError *error;
+  id metadata = nil;
+  id rowMetadata = row[@"metadata"];
+  if ([rowMetadata isKindOfClass:[NSString class]]) {
+    metadata = [NSJSONSerialization JSONObjectWithData:[(NSString *)rowMetadata dataUsingEncoding:NSUTF8StringEncoding] options:kNilOptions error:&error];
+    NSAssert(!error && metadata && [metadata isKindOfClass:[NSDictionary class]], @"Asset metadata should be a valid JSON object");
+  }
+
+  id launchAssetId = row[@"launch_asset_id"];
+  NSURL *url = [NSURL URLWithString:row[@"url"]];
+
+  EXUpdatesAsset *asset = [[EXUpdatesAsset alloc] initWithUrl:url type:row[@"type"]];
+  asset.filename = row[@"relative_path"];
+  asset.metadata = metadata;
+  asset.isLaunchAsset = (launchAssetId && [launchAssetId isKindOfClass:[NSNumber class]])
+    ? [(NSNumber *)launchAssetId isEqualToNumber:(NSNumber *)row[@"id"]]
+    : NO;
+  return asset;
 }
 
 @end

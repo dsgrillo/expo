@@ -14,10 +14,10 @@ NS_ASSUME_NONNULL_BEGIN
   EXUpdatesDatabase *database = [EXUpdatesAppController sharedInstance].database;
   dispatch_async(database.databaseQueue, ^{
     NSError *error;
-    NSFileManager *fileManager = [NSFileManager defaultManager];
     NSURL *updatesDirectory = [EXUpdatesAppController sharedInstance].updatesDirectory;
 
-    NSDate *beginMarkForDeletion = [NSDate date];
+    NSDate *beginDeleteFromDatabase = [NSDate date];
+
     [database markUpdateReadyWithId:launchedUpdate.updateId error:&error];
     if (error) {
       NSLog(@"Error reaping updates: %@", error.localizedDescription);
@@ -30,68 +30,48 @@ NS_ASSUME_NONNULL_BEGIN
       return;
     }
     NSArray<EXUpdatesUpdate *> *updatesToDelete = [selectionPolicy updatesToDeleteWithLaunchedUpdate:launchedUpdate updates:allUpdates];
-    for (EXUpdatesUpdate *update in updatesToDelete) {
-      [database markUpdateForDeletionWithId:update.updateId error:&error];
-      if (error) {
-        NSLog(@"Error reaping updates: %@", error.localizedDescription);
-        return;
-      }
-    }
-    NSArray<NSDictionary *> *assetsForDeletion = [database markUnusedAssetsForDeletionWithError:&error];
+    [database deleteUpdates:updatesToDelete error:&error];
     if (error) {
       NSLog(@"Error reaping updates: %@", error.localizedDescription);
       return;
     }
-    NSLog(@"Marked updates and assets for deletion in %f ms", [beginMarkForDeletion timeIntervalSinceNow] * -1000);
 
-    NSMutableArray<NSNumber *> *deletedAssets = [NSMutableArray new];
-    NSMutableArray<NSDictionary *> *erroredAssets = [NSMutableArray new];
+    NSArray<EXUpdatesAsset *> *assetsForDeletion = [database deleteUnusedAssetsWithError:&error];
+    if (error) {
+      NSLog(@"Error reaping updates: %@", error.localizedDescription);
+      return;
+    }
 
-    dispatch_sync(EXUpdatesAppController.sharedInstance.assetFilesQueue, ^{
+    NSLog(@"Deleted assets and updates from SQLite in %f ms", [beginDeleteFromDatabase timeIntervalSinceNow] * -1000);
+
+    dispatch_async(EXUpdatesAppController.sharedInstance.assetFilesQueue, ^{
+      NSUInteger deletedAssets = 0;
+      NSMutableArray<EXUpdatesAsset *> *erroredAssets = [NSMutableArray new];
+
       NSDate *beginDeleteAssets = [NSDate date];
-      for (NSDictionary *asset in assetsForDeletion) {
-        NSAssert([@(1) isEqualToNumber:asset[@"marked_for_deletion"]], @"asset should be marked for deletion");
-        NSNumber *assetId = asset[@"id"];
-        NSString *relativePath = asset[@"relative_path"];
-        NSAssert([assetId isKindOfClass:[NSNumber class]], @"asset id should be a nonnull number");
-        NSAssert([relativePath isKindOfClass:[NSString class]], @"relative_path should be a nonnull string");
-
-        NSURL *fileUrl = [updatesDirectory URLByAppendingPathComponent:relativePath];
-        NSError *err;
-        if (![fileManager fileExistsAtPath:fileUrl.path] || [fileManager removeItemAtURL:fileUrl error:&err]) {
-          [deletedAssets addObject:assetId];
-        } else {
+      for (EXUpdatesAsset *asset in assetsForDeletion) {
+        NSURL *localUrl = [updatesDirectory URLByAppendingPathComponent:asset.filename];
+        NSError *error;
+        if ([NSFileManager.defaultManager fileExistsAtPath:localUrl.path] && ![NSFileManager.defaultManager removeItemAtURL:localUrl error:&error]) {
+          NSLog(@"Error deleting asset at %@: %@", localUrl, error.localizedDescription);
           [erroredAssets addObject:asset];
-          NSLog(@"Error deleting asset at %@: %@", fileUrl, [err localizedDescription]);
+        } else {
+          deletedAssets++;
         }
       }
-      NSLog(@"Deleted %lu assets from disk in %f ms", (unsigned long)[deletedAssets count], [beginDeleteAssets timeIntervalSinceNow] * -1000);
+      NSLog(@"Deleted %lu assets from disk in %f ms", deletedAssets, [beginDeleteAssets timeIntervalSinceNow] * -1000);
 
       NSDate *beginRetryDeletes = [NSDate date];
       // retry errored deletions
-      for (NSDictionary *asset in erroredAssets) {
-        NSNumber *assetId = asset[@"id"];
-        NSString *relativePath = asset[@"relative_path"];
-
-        NSURL *fileUrl = [updatesDirectory URLByAppendingPathComponent:relativePath];
-        NSError *err;
-        if (![fileManager fileExistsAtPath:fileUrl.path] || [fileManager removeItemAtURL:fileUrl error:&err]) {
-          [deletedAssets addObject:assetId];
-          [erroredAssets removeObject:asset];
-        } else {
-          NSLog(@"Retried deleting asset at %@ and failed again: %@", fileUrl, [err localizedDescription]);
+      for (EXUpdatesAsset *asset in erroredAssets) {
+        NSURL *localUrl = [updatesDirectory URLByAppendingPathComponent:asset.filename];
+        NSError *error;
+        if ([NSFileManager.defaultManager fileExistsAtPath:localUrl.path] && ![NSFileManager.defaultManager removeItemAtURL:localUrl error:&error]) {
+          NSLog(@"Retried deleting asset at %@ and failed again: %@", localUrl, error.localizedDescription);
         }
       }
       NSLog(@"Retried deleting assets from disk in %f ms", [beginRetryDeletes timeIntervalSinceNow] * -1000);
     });
-
-    NSDate *beginDeleteFromDatabase = [NSDate date];
-    NSError *deleteAssetsError;
-    NSError *deleteUpdatesError;
-    [database deleteAssetsWithIds:deletedAssets error:&deleteAssetsError];
-    [database deleteUnusedUpdatesWithError:&deleteUpdatesError];
-    NSAssert(!deleteAssetsError && !deleteUpdatesError, @"Inconsistent state; error removing deleted updates or assets from DB");
-    NSLog(@"Deleted assets and updates from SQLite in %f ms", [beginDeleteFromDatabase timeIntervalSinceNow] * -1000);
   });
 }
 
