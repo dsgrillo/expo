@@ -28,11 +28,11 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 + (instancetype)updateWithId:(NSUUID *)updateId
-    commitTime:(NSDate *)commitTime
-runtimeVersion:(NSString *)runtimeVersion
-      metadata:(nullable NSDictionary *)metadata
-        status:(EXUpdatesUpdateStatus)status
-          keep:(BOOL)keep
+                  commitTime:(NSDate *)commitTime
+              runtimeVersion:(NSString *)runtimeVersion
+                    metadata:(nullable NSDictionary *)metadata
+                      status:(EXUpdatesUpdateStatus)status
+                        keep:(BOOL)keep
 {
   // for now, we store the entire managed manifest in the metadata field
   EXUpdatesUpdate *update = [[self alloc] initWithRawManifest:metadata];
@@ -58,9 +58,11 @@ runtimeVersion:(NSString *)runtimeVersion
 {
   if (!_assets) {
     EXUpdatesDatabase *db = [EXUpdatesAppController sharedInstance].database;
-    NSError *error;
-    _assets = [db assetsWithUpdateId:_updateId error:&error];
-    NSAssert(_assets, @"Assets should be nonnull when selected from DB: %@", error.localizedDescription);
+    dispatch_sync(db.databaseQueue, ^{
+      NSError *error;
+      self->_assets = [db assetsWithUpdateId:self->_updateId error:&error];
+      NSAssert(self->_assets, @"Assets should be nonnull when selected from DB: %@", error.localizedDescription);
+    });
   }
   return _assets;
 }
