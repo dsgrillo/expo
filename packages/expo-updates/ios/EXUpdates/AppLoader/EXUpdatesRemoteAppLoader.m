@@ -15,9 +15,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 @implementation EXUpdatesRemoteAppLoader
 
-- (instancetype)init
+- (instancetype)initWithCompletionQueue:(dispatch_queue_t)completionQueue
 {
-  if (self = [super init]) {
+  if (self = [super initWithCompletionQueue:completionQueue]) {
     _downloader = [[EXUpdatesFileDownloader alloc] init];
   }
   return self;
