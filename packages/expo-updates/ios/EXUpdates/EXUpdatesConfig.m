@@ -6,7 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface EXUpdatesConfig ()
 
-@property (nonatomic, readwrite, strong) NSURL *remoteUrl;
+@property (nonatomic, readwrite, strong) NSURL *updateUrl;
 @property (nonatomic, readwrite, strong) NSString *releaseChannel;
 @property (nonatomic, readwrite, strong) NSNumber *launchWaitMs;
 @property (nonatomic, readwrite, assign) EXUpdatesCheckAutomaticallyConfig checkOnLaunch;
@@ -46,11 +46,11 @@ static NSString * const kEXUpdatesDefaultReleaseChannelName = @"default";
   NSString *configPath = [[NSBundle mainBundle] pathForResource:kEXUpdatesConfigPlistName ofType:@"plist"];
   NSDictionary *config = (configPath) ? [NSDictionary dictionaryWithContentsOfFile:configPath] : @{};
 
-  id remoteUrl = config[@"remoteUrl"];
-  NSAssert(remoteUrl && [remoteUrl isKindOfClass:[NSString class]], @"remoteUrl must be a nonnull string");
-  NSURL *url = [NSURL URLWithString:(NSString *)remoteUrl];
-  NSAssert(url, @"remoteUrl must be a valid URL");
-  _remoteUrl = url;
+  id updateUrl = config[@"updateUrl"];
+  NSAssert(updateUrl && [updateUrl isKindOfClass:[NSString class]], @"updateUrl must be a nonnull string");
+  NSURL *url = [NSURL URLWithString:(NSString *)updateUrl];
+  NSAssert(url, @"updateUrl must be a valid URL");
+  _updateUrl = url;
 
   id releaseChannel = config[@"releaseChannel"];
   if (releaseChannel && [releaseChannel isKindOfClass:[NSString class]]) {

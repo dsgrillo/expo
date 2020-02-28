@@ -10,7 +10,7 @@ typedef NS_ENUM(NSInteger, EXUpdatesCheckAutomaticallyConfig) {
 
 @interface EXUpdatesConfig : NSObject
 
-@property (nonatomic, readonly) NSURL *remoteUrl;
+@property (nonatomic, readonly) NSURL *updateUrl;
 @property (nonatomic, readonly) NSString *releaseChannel;
 @property (nonatomic, readonly) NSNumber *launchWaitMs;
 @property (nonatomic, readonly) EXUpdatesCheckAutomaticallyConfig checkOnLaunch;

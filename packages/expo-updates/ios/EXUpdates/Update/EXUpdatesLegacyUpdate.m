@@ -104,7 +104,7 @@ static NSString * const kEXUpdatesExpoTestDomain = @"expo.test";
 
 + (NSURL *)bundledAssetBaseUrlWithManifest:(NSDictionary *)manifest
 {
-  NSURL *manifestUrl = [EXUpdatesConfig sharedInstance].remoteUrl;
+  NSURL *manifestUrl = [EXUpdatesConfig sharedInstance].updateUrl;
   NSString *host = manifestUrl.host;
   if (!host ||
       [host containsString:kEXUpdatesExpoIoDomain] ||

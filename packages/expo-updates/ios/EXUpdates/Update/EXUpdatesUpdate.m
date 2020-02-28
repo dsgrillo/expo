@@ -22,7 +22,7 @@ NS_ASSUME_NONNULL_BEGIN
 {
   if (self = [super init]) {
     _rawManifest = manifest;
-    _projectIdentifier = [EXUpdatesConfig sharedInstance].remoteUrl.absoluteString;
+    _projectIdentifier = [EXUpdatesConfig sharedInstance].updateUrl.absoluteString;
   }
   return self;
 }
