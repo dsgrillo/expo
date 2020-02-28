@@ -208,10 +208,7 @@ UM_EXPORT_METHOD_AS(askAsync,
 
 - (id<UMPermissionsRequester>)getPermissionRequesterForType:(NSString *)type
 {
-  static dispatch_once_t once;
-  dispatch_once(&once, ^{
-    [self ensureRequestersFallbacksAreRegistered];
-  });
+  [self ensureRequestersFallbacksAreRegistered];
   return _requesters[type];
 }
 
