@@ -73,21 +73,24 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
 - (void)start
 {
   NSAssert(!_updatesDirectory, @"EXUpdatesAppController:start should only be called once per instance");
+  _isEnabled = YES;
+
+  NSError *fsError;
+  _updatesDirectory = [EXUpdatesUtils initializeUpdatesDirectoryWithError:&fsError];
+  if (fsError) {
+    [self _emergencyLaunchWithFatalError:fsError];
+    return;
+  }
+
+  __block BOOL dbSuccess;
+  __block NSError *dbError;
+  dispatch_semaphore_t dbSemaphore = dispatch_semaphore_create(0);
+  dispatch_async(_database.databaseQueue, ^{
+    dbSuccess = [self->_database openDatabaseWithError:&dbError];
+    dispatch_semaphore_signal(dbSemaphore);
+  });
+
   dispatch_async(_controllerQueue, ^{
-    self->_isEnabled = YES;
-    NSError *fsError;
-    self->_updatesDirectory = [EXUpdatesUtils initializeUpdatesDirectoryWithError:&fsError];
-    if (fsError) {
-      [self _emergencyLaunchWithFatalError:fsError];
-      return;
-    }
-
-    NSError *dbError;
-    if (![self->_database openDatabaseWithError:&dbError]) {
-      [self _emergencyLaunchWithFatalError:dbError];
-      return;
-    }
-
     BOOL shouldCheckForUpdate = [EXUpdatesUtils shouldCheckForUpdate];
     NSNumber *launchWaitMs = [EXUpdatesConfig sharedInstance].launchWaitMs;
     if ([launchWaitMs isEqualToNumber:@(0)] || !shouldCheckForUpdate) {
@@ -96,6 +99,15 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
       NSDate *fireDate = [NSDate dateWithTimeIntervalSinceNow:[launchWaitMs doubleValue] / 1000];
       self->_timer = [[NSTimer alloc] initWithFireDate:fireDate interval:0 target:self selector:@selector(_timerDidFire) userInfo:nil repeats:NO];
       [[NSRunLoop currentRunLoop] addTimer:self->_timer forMode:NSDefaultRunLoopMode];
+    }
+
+    dispatch_semaphore_wait(dbSemaphore, DISPATCH_TIME_FOREVER);
+    if (!dbSuccess) {
+      if (self->_timer) {
+        [self->_timer invalidate];
+      }
+      [self _emergencyLaunchWithFatalError:dbError];
+      return;
     }
 
     [self _loadEmbeddedUpdateWithCompletion:^{
