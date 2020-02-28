@@ -46,20 +46,29 @@ NSString * const kEXUpdatesEmbeddedBundleFileType = @"bundle";
 {
   NSURL *updatesDirectory = [EXUpdatesAppController sharedInstance].updatesDirectory;
   NSURL *destinationUrl = [updatesDirectory URLByAppendingPathComponent:asset.filename];
-  if ([[NSFileManager defaultManager] fileExistsAtPath:[destinationUrl path]]) {
-    [self handleAssetDownloadAlreadyExists:asset];
-  } else {
-    NSAssert(asset.mainBundleFilename, @"embedded asset mainBundleFilename must be nonnull");
-    NSString *bundlePath = [[NSBundle mainBundle] pathForResource:asset.mainBundleFilename ofType:asset.type];
-    NSAssert(bundlePath, @"NSBundle must contain the expected assets");
 
-    NSError *err;
-    if ([[NSFileManager defaultManager] copyItemAtPath:bundlePath toPath:[destinationUrl path] error:&err]) {
-      [self handleAssetDownloadWithData:[NSData dataWithContentsOfFile:bundlePath] response:nil asset:asset];
+  dispatch_async(EXUpdatesAppController.sharedInstance.assetFilesQueue, ^{
+    if ([[NSFileManager defaultManager] fileExistsAtPath:[destinationUrl path]]) {
+      dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        [self handleAssetDownloadAlreadyExists:asset];
+      });
     } else {
-      [self handleAssetDownloadWithError:err asset:asset];
+      NSAssert(asset.mainBundleFilename, @"embedded asset mainBundleFilename must be nonnull");
+      NSString *bundlePath = [[NSBundle mainBundle] pathForResource:asset.mainBundleFilename ofType:asset.type];
+      NSAssert(bundlePath, @"NSBundle must contain the expected assets");
+
+      NSError *err;
+      if ([[NSFileManager defaultManager] copyItemAtPath:bundlePath toPath:[destinationUrl path] error:&err]) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+          [self handleAssetDownloadWithData:[NSData dataWithContentsOfFile:bundlePath] response:nil asset:asset];
+        });
+      } else {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+          [self handleAssetDownloadWithError:err asset:asset];
+        });
+      }
     }
-  }
+  });
 }
 
 - (void)loadUpdateFromUrl:(NSURL *)url

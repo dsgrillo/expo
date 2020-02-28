@@ -18,9 +18,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) EXUpdatesFileDownloader *downloader;
 @property (nonatomic, copy) EXUpdatesAppLauncherCompletionBlock completion;
 
-@property (nonatomic, strong) NSLock *lock;
-@property (nonatomic, assign) NSUInteger assetsToDownload;
-@property (nonatomic, assign) NSUInteger assetsToDownloadFinished;
+@property (nonatomic, strong) dispatch_queue_t launcherQueue;
+@property (nonatomic, assign) NSUInteger completedAssets;
 
 @property (nonatomic, strong) NSError *launchAssetError;
 
@@ -33,9 +32,8 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
 - (instancetype)init
 {
   if (self = [super init]) {
-    _lock = [NSLock new];
-    _assetsToDownload = 0;
-    _assetsToDownloadFinished = 0;
+    _launcherQueue = dispatch_queue_create("expo.launcher.LauncherQueue", DISPATCH_QUEUE_SERIAL);
+    _completedAssets = 0;
   }
   return self;
 }
@@ -81,82 +79,136 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
 - (void)_ensureAllAssetsExist
 {
   _assetFilesMap = [NSMutableDictionary new];
-  NSURL *updatesDirectory = [EXUpdatesAppController sharedInstance].updatesDirectory;
+  NSURL *updatesDirectory = EXUpdatesAppController.sharedInstance.updatesDirectory;
 
-  [_lock lock];
   if (_launchedUpdate) {
+    NSUInteger totalAssetCount = _launchedUpdate.assets.count;
     for (EXUpdatesAsset *asset in _launchedUpdate.assets) {
-      if ([self _ensureAssetExists:asset]) {
-        NSURL *assetLocalUrl = [updatesDirectory URLByAppendingPathComponent:asset.filename];
+      NSURL *assetLocalUrl = [updatesDirectory URLByAppendingPathComponent:asset.filename];
+      [self _ensureAssetExists:asset withLocalUrl:assetLocalUrl completion:^(BOOL exists) {
+        dispatch_assert_queue(self->_launcherQueue);
+        self->_completedAssets++;
+
         if (asset.isLaunchAsset) {
-          _launchAssetUrl = assetLocalUrl;
+          self->_launchAssetUrl = assetLocalUrl;
         } else {
           if (asset.localAssetsKey) {
-            _assetFilesMap[asset.localAssetsKey] = assetLocalUrl.absoluteString;
+            self->_assetFilesMap[asset.localAssetsKey] = assetLocalUrl.absoluteString;
           }
         }
-      }
+
+        if (self->_completedAssets == totalAssetCount) {
+          dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            self->_completion(self->_launchAssetError, self->_launchAssetUrl != nil);
+            self->_completion = nil;
+          });
+        }
+      }];
     }
   }
-
-  if (_assetsToDownload == 0) {
-    _completion(nil, _launchAssetUrl != nil);
-    _completion = nil;
-  }
-  [_lock unlock];
 }
 
-- (BOOL)_ensureAssetExists:(EXUpdatesAsset *)asset
+- (void)_ensureAssetExists:(EXUpdatesAsset *)asset withLocalUrl:(NSURL *)assetLocalUrl completion:(void (^)(BOOL exists))completion
 {
-  NSURL *assetLocalUrl = [[EXUpdatesAppController sharedInstance].updatesDirectory URLByAppendingPathComponent:asset.filename];
-  BOOL assetFileExists = [[NSFileManager defaultManager] fileExistsAtPath:[assetLocalUrl path]];
-  if (!assetFileExists) {
-    // something has gone wrong, we're missing the asset
-    // first check to see if a copy is embedded in the binary
-    EXUpdatesUpdate *embeddedManifest = [EXUpdatesEmbeddedAppLoader embeddedManifest];
-    if (embeddedManifest) {
-      EXUpdatesAsset *matchingAsset;
-      for (EXUpdatesAsset *embeddedAsset in embeddedManifest.assets) {
-        if ([[embeddedAsset.url absoluteString] isEqualToString:[asset.url absoluteString]]) {
-          matchingAsset = embeddedAsset;
-          break;
-        }
+  [self _checkExistenceOfAsset:asset withLocalUrl:assetLocalUrl completion:^(BOOL exists) {
+    if (exists) {
+      completion(YES);
+      return;
+    }
+
+    [self _maybeCopyAssetFromMainBundle:asset withLocalUrl:assetLocalUrl completion:^(BOOL success, NSError * _Nullable error) {
+      if (success) {
+        completion(YES);
+        return;
       }
 
-      if (matchingAsset && matchingAsset.mainBundleFilename) {
-        NSString *bundlePath = [[NSBundle mainBundle] pathForResource:matchingAsset.mainBundleFilename ofType:matchingAsset.type];
-        NSError *error;
-        if ([[NSFileManager defaultManager] copyItemAtPath:bundlePath toPath:[assetLocalUrl path] error:&error]) {
-          assetFileExists = YES;
+      NSLog(@"Error copying embedded asset with URL %@: %@", asset.url.absoluteString, error.localizedDescription);
+
+      [self _downloadAsset:asset withLocalUrl:assetLocalUrl completion:^(NSError * _Nullable error, EXUpdatesAsset *asset, NSURL *assetLocalUrl) {
+        if (error) {
+          if (asset.isLaunchAsset) {
+            // save the error -- since this is the launch asset, the launcher will fail
+            // so we want to propagate this error
+            self->_launchAssetError = error;
+          }
+          NSLog(@"Failed to load missing asset with URL %@: %@", asset.url.absoluteString, error.localizedDescription);
+          completion(NO);
         } else {
-          NSLog(@"Error copying embedded asset: %@", error.localizedDescription);
+          // attempt to update the database record to match the newly downloaded asset
+          // but don't block launching on this
+          EXUpdatesDatabase *database = [EXUpdatesAppController sharedInstance].database;
+          dispatch_async(database.databaseQueue, ^{
+            NSError *error;
+            [database updateAsset:asset error:&error];
+            if (error) {
+              NSLog(@"Could not write data for downloaded asset to database: %@", error.localizedDescription);
+            }
+          });
+
+          completion(YES);
         }
+      }];
+    }];
+  }];
+}
+
+- (void)_checkExistenceOfAsset:(EXUpdatesAsset *)asset withLocalUrl:(NSURL *)assetLocalUrl completion:(void (^)(BOOL exists))completion
+{
+  dispatch_async(EXUpdatesAppController.sharedInstance.assetFilesQueue, ^{
+    BOOL exists = [NSFileManager.defaultManager fileExistsAtPath:[assetLocalUrl path]];
+    dispatch_async(self->_launcherQueue, ^{
+      completion(exists);
+    });
+  });
+}
+
+- (void)_maybeCopyAssetFromMainBundle:(EXUpdatesAsset *)asset
+                         withLocalUrl:(NSURL *)assetLocalUrl
+                           completion:(void (^)(BOOL success, NSError * _Nullable error))completion
+{
+  EXUpdatesUpdate *embeddedManifest = [EXUpdatesEmbeddedAppLoader embeddedManifest];
+  if (embeddedManifest) {
+    EXUpdatesAsset *matchingAsset;
+    for (EXUpdatesAsset *embeddedAsset in embeddedManifest.assets) {
+      if ([[embeddedAsset.url absoluteString] isEqualToString:[asset.url absoluteString]]) {
+        matchingAsset = embeddedAsset;
+        break;
       }
     }
-  }
 
-  if (!assetFileExists) {
-    // we couldn't copy the file from the embedded assets
-    // so we need to attempt to download it
-    _assetsToDownload++;
+    if (matchingAsset && matchingAsset.mainBundleFilename) {
+      dispatch_async(EXUpdatesAppController.sharedInstance.assetFilesQueue, ^{
+        NSString *bundlePath = [[NSBundle mainBundle] pathForResource:matchingAsset.mainBundleFilename ofType:matchingAsset.type];
+        NSError *error;
+        BOOL success = [NSFileManager.defaultManager copyItemAtPath:bundlePath toPath:[assetLocalUrl path] error:&error];
+        dispatch_async(self->_launcherQueue, ^{
+          completion(success, error);
+        });
+      });
+    }
+  }
+}
+
+- (void)_downloadAsset:(EXUpdatesAsset *)asset
+          withLocalUrl:(NSURL *)assetLocalUrl
+            completion:(void (^)(NSError * _Nullable error, EXUpdatesAsset *asset, NSURL *assetLocalUrl))completion
+{
+  dispatch_async(EXUpdatesAppController.sharedInstance.assetFilesQueue, ^{
     [self.downloader downloadFileFromURL:asset.url toPath:[assetLocalUrl path] successBlock:^(NSData *data, NSURLResponse *response) {
-      if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
-        asset.headers = ((NSHTTPURLResponse *)response).allHeaderFields;
-      }
-      asset.contentHash = [EXUpdatesUtils sha256WithData:data];
-      asset.downloadTime = [NSDate date];
-      [self _assetDownloadDidFinish:asset withLocalUrl:assetLocalUrl];
+      dispatch_async(self->_launcherQueue, ^{
+        if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+          asset.headers = ((NSHTTPURLResponse *)response).allHeaderFields;
+        }
+        asset.contentHash = [EXUpdatesUtils sha256WithData:data];
+        asset.downloadTime = [NSDate date];
+        completion(nil, asset, assetLocalUrl);
+      });
     } errorBlock:^(NSError *error, NSURLResponse *response) {
-      if (asset.isLaunchAsset) {
-        // save the error -- since this is the launch asset, the launcher will fail
-        // so we want to propagate this error
-        self->_launchAssetError = error;
-      }
-      [self _assetDownloadDidFinish:asset withError:error];
+      dispatch_async(self->_launcherQueue, ^{
+        completion(error, asset, assetLocalUrl);
+      });
     }];
-  }
-
-  return assetFileExists;
+  });
 }
 
 - (EXUpdatesFileDownloader *)downloader
@@ -165,47 +217,6 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
     _downloader = [[EXUpdatesFileDownloader alloc] init];
   }
   return _downloader;
-}
-
-- (void)_assetDownloadDidFinish:(EXUpdatesAsset *)asset withLocalUrl:(NSURL *)localUrl
-{
-  [_lock lock];
-  _assetsToDownloadFinished++;
-
-  EXUpdatesDatabase *database = [EXUpdatesAppController sharedInstance].database;
-  dispatch_async(database.databaseQueue, ^{
-    NSError *error;
-    [database updateAsset:asset error:&error];
-    if (error) {
-      NSLog(@"Could not write data for downloaded asset to database: %@", error.localizedDescription);
-    }
-  });
-
-  if (asset.isLaunchAsset) {
-    _launchAssetUrl = localUrl;
-  } else {
-    if (asset.localAssetsKey) {
-      _assetFilesMap[asset.localAssetsKey] = localUrl.absoluteString;
-    }
-  }
-
-  if (_assetsToDownloadFinished == _assetsToDownload) {
-    _completion(_launchAssetError, _launchAssetUrl != nil);
-    _completion = nil;
-  }
-  [_lock unlock];
-}
-
-- (void)_assetDownloadDidFinish:(EXUpdatesAsset *)asset withError:(NSError *)error
-{
-  NSLog(@"Failed to load missing asset with URL %@: %@", asset.url.absoluteString, error.localizedDescription);
-  [_lock lock];
-  _assetsToDownloadFinished++;
-  if (_assetsToDownloadFinished == _assetsToDownload) {
-    _completion(_launchAssetError, _launchAssetUrl != nil);
-    _completion = nil;
-  }
-  [_lock unlock];
 }
 
 @end

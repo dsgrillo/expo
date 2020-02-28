@@ -40,18 +40,27 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)downloadAsset:(EXUpdatesAsset *)asset
 {
-  NSURL *updatesDirectory = [EXUpdatesAppController sharedInstance].updatesDirectory;
+  NSURL *updatesDirectory = EXUpdatesAppController.sharedInstance.updatesDirectory;
   NSURL *urlOnDisk = [updatesDirectory URLByAppendingPathComponent:asset.filename];
-  if ([[NSFileManager defaultManager] fileExistsAtPath:[urlOnDisk path]]) {
-    // file already exists, we don't need to download it again
-    [self handleAssetDownloadAlreadyExists:asset];
-  } else {
-    [_downloader downloadFileFromURL:asset.url toPath:[urlOnDisk path] successBlock:^(NSData *data, NSURLResponse *response) {
-      [self handleAssetDownloadWithData:data response:response asset:asset];
-    } errorBlock:^(NSError *error, NSURLResponse *response) {
-      [self handleAssetDownloadWithError:error asset:asset];
-    }];
-  }
+
+  dispatch_async(EXUpdatesAppController.sharedInstance.assetFilesQueue, ^{
+    if ([[NSFileManager defaultManager] fileExistsAtPath:[urlOnDisk path]]) {
+      // file already exists, we don't need to download it again
+      dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        [self handleAssetDownloadAlreadyExists:asset];
+      });
+    } else {
+      [self->_downloader downloadFileFromURL:asset.url toPath:[urlOnDisk path] successBlock:^(NSData *data, NSURLResponse *response) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+          [self handleAssetDownloadWithData:data response:response asset:asset];
+        });
+      } errorBlock:^(NSError *error, NSURLResponse *response) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+          [self handleAssetDownloadWithError:error asset:asset];
+        });
+      }];
+    }
+  });
 }
 
 @end

@@ -52,6 +52,7 @@ typedef void (^EXUpdatesAppControllerRelaunchCompletionBlock)(BOOL success);
 @property (nonatomic, readonly) EXUpdatesDatabase *database;
 @property (nonatomic, readonly) id<EXUpdatesSelectionPolicy> selectionPolicy;
 @property (nonatomic, readonly) NSURL *updatesDirectory;
+@property (nonatomic, readonly) dispatch_queue_t assetFilesQueue;
 @property (nonatomic, readonly, assign) BOOL isEnabled;
 @property (nonatomic, readonly, assign) BOOL isEmergencyLaunch;
 @property (nullable, nonatomic, readonly, strong) EXUpdatesUpdate *launchedUpdate;

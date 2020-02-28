@@ -27,6 +27,7 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
 @property (nonatomic, readwrite, strong) id<EXUpdatesSelectionPolicy> selectionPolicy;
 @property (nonatomic, readwrite, strong) EXUpdatesEmbeddedAppLoader *embeddedAppLoader;
 @property (nonatomic, readwrite, strong) EXUpdatesRemoteAppLoader *remoteAppLoader;
+@property (nonatomic, readwrite, strong) dispatch_queue_t assetFilesQueue;
 
 @property (nonatomic, readwrite, strong) NSURL *updatesDirectory;
 @property (nonatomic, readwrite, assign) BOOL isEnabled;
@@ -60,6 +61,7 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
   if (self = [super init]) {
     _database = [[EXUpdatesDatabase alloc] init];
     _selectionPolicy = [[EXUpdatesSelectionPolicyNewest alloc] init];
+    _assetFilesQueue = dispatch_queue_create("expo.controller.AssetFilesQueue", DISPATCH_QUEUE_SERIAL);
     _isEnabled = NO;
     _isReadyToLaunch = NO;
     _isTimerFinished = NO;

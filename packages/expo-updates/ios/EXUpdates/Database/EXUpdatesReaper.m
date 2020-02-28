@@ -47,41 +47,43 @@ NS_ASSUME_NONNULL_BEGIN
     NSMutableArray<NSNumber *> *deletedAssets = [NSMutableArray new];
     NSMutableArray<NSDictionary *> *erroredAssets = [NSMutableArray new];
 
-    NSDate *beginDeleteAssets = [NSDate date];
-    for (NSDictionary *asset in assetsForDeletion) {
-      NSAssert([@(1) isEqualToNumber:asset[@"marked_for_deletion"]], @"asset should be marked for deletion");
-      NSNumber *assetId = asset[@"id"];
-      NSString *relativePath = asset[@"relative_path"];
-      NSAssert([assetId isKindOfClass:[NSNumber class]], @"asset id should be a nonnull number");
-      NSAssert([relativePath isKindOfClass:[NSString class]], @"relative_path should be a nonnull string");
+    dispatch_sync(EXUpdatesAppController.sharedInstance.assetFilesQueue, ^{
+      NSDate *beginDeleteAssets = [NSDate date];
+      for (NSDictionary *asset in assetsForDeletion) {
+        NSAssert([@(1) isEqualToNumber:asset[@"marked_for_deletion"]], @"asset should be marked for deletion");
+        NSNumber *assetId = asset[@"id"];
+        NSString *relativePath = asset[@"relative_path"];
+        NSAssert([assetId isKindOfClass:[NSNumber class]], @"asset id should be a nonnull number");
+        NSAssert([relativePath isKindOfClass:[NSString class]], @"relative_path should be a nonnull string");
 
-      NSURL *fileUrl = [updatesDirectory URLByAppendingPathComponent:relativePath];
-      NSError *err;
-      if (![fileManager fileExistsAtPath:fileUrl.path] || [fileManager removeItemAtURL:fileUrl error:&err]) {
-        [deletedAssets addObject:assetId];
-      } else {
-        [erroredAssets addObject:asset];
-        NSLog(@"Error deleting asset at %@: %@", fileUrl, [err localizedDescription]);
+        NSURL *fileUrl = [updatesDirectory URLByAppendingPathComponent:relativePath];
+        NSError *err;
+        if (![fileManager fileExistsAtPath:fileUrl.path] || [fileManager removeItemAtURL:fileUrl error:&err]) {
+          [deletedAssets addObject:assetId];
+        } else {
+          [erroredAssets addObject:asset];
+          NSLog(@"Error deleting asset at %@: %@", fileUrl, [err localizedDescription]);
+        }
       }
-    }
-    NSLog(@"Deleted %lu assets from disk in %f ms", (unsigned long)[deletedAssets count], [beginDeleteAssets timeIntervalSinceNow] * -1000);
+      NSLog(@"Deleted %lu assets from disk in %f ms", (unsigned long)[deletedAssets count], [beginDeleteAssets timeIntervalSinceNow] * -1000);
 
-    NSDate *beginRetryDeletes = [NSDate date];
-    // retry errored deletions
-    for (NSDictionary *asset in erroredAssets) {
-      NSNumber *assetId = asset[@"id"];
-      NSString *relativePath = asset[@"relative_path"];
+      NSDate *beginRetryDeletes = [NSDate date];
+      // retry errored deletions
+      for (NSDictionary *asset in erroredAssets) {
+        NSNumber *assetId = asset[@"id"];
+        NSString *relativePath = asset[@"relative_path"];
 
-      NSURL *fileUrl = [updatesDirectory URLByAppendingPathComponent:relativePath];
-      NSError *err;
-      if (![fileManager fileExistsAtPath:fileUrl.path] || [fileManager removeItemAtURL:fileUrl error:&err]) {
-        [deletedAssets addObject:assetId];
-        [erroredAssets removeObject:asset];
-      } else {
-        NSLog(@"Retried deleting asset at %@ and failed again: %@", fileUrl, [err localizedDescription]);
+        NSURL *fileUrl = [updatesDirectory URLByAppendingPathComponent:relativePath];
+        NSError *err;
+        if (![fileManager fileExistsAtPath:fileUrl.path] || [fileManager removeItemAtURL:fileUrl error:&err]) {
+          [deletedAssets addObject:assetId];
+          [erroredAssets removeObject:asset];
+        } else {
+          NSLog(@"Retried deleting asset at %@ and failed again: %@", fileUrl, [err localizedDescription]);
+        }
       }
-    }
-    NSLog(@"Retried deleting assets from disk in %f ms", [beginRetryDeletes timeIntervalSinceNow] * -1000);
+      NSLog(@"Retried deleting assets from disk in %f ms", [beginRetryDeletes timeIntervalSinceNow] * -1000);
+    });
 
     NSDate *beginDeleteFromDatabase = [NSDate date];
     NSError *deleteAssetsError;
