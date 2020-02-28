@@ -9,6 +9,7 @@ typedef void (^EXUpdatesAppLoaderErrorBlock)(NSError *error);
 
 @interface EXUpdatesAppLoader : NSObject
 
+- (instancetype)initWithCompletionQueue:(dispatch_queue_t)completionQueue;
 - (void)loadUpdateFromUrl:(NSURL *)url
                   success:(EXUpdatesAppLoaderSuccessBlock)success
                     error:(EXUpdatesAppLoaderErrorBlock)error;

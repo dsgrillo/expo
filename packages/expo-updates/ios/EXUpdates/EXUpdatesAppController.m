@@ -100,24 +100,22 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
 
     [self _loadEmbeddedUpdateWithCompletion:^{
       [self _launchWithCompletion:^(NSError * _Nullable error, BOOL success) {
-        dispatch_async(self->_controllerQueue, ^{
-          if (!success) {
-            [self _emergencyLaunchWithFatalError:error ?: [NSError errorWithDomain:kEXUpdatesAppControllerErrorDomain
-                                                                         code:1010
-                                                                     userInfo:@{NSLocalizedDescriptionKey: @"Failed to find or load launch asset"}]];
-          } else {
-            self->_isReadyToLaunch = YES;
-            [self _maybeFinish];
-          }
+        if (!success) {
+          [self _emergencyLaunchWithFatalError:error ?: [NSError errorWithDomain:kEXUpdatesAppControllerErrorDomain
+                                                                       code:1010
+                                                                   userInfo:@{NSLocalizedDescriptionKey: @"Failed to find or load launch asset"}]];
+        } else {
+          self->_isReadyToLaunch = YES;
+          [self _maybeFinish];
+        }
 
-          if (shouldCheckForUpdate) {
-            [self _loadRemoteUpdateWithCompletion:^(NSError * _Nullable error, EXUpdatesUpdate * _Nullable update) {
-              [self _handleRemoteUpdateLoaded:update error:error];
-            }];
-          } else {
-            [self _runReaper];
-          }
-        });
+        if (shouldCheckForUpdate) {
+          [self _loadRemoteUpdateWithCompletion:^(NSError * _Nullable error, EXUpdatesUpdate * _Nullable update) {
+            [self _handleRemoteUpdateLoaded:update error:error];
+          }];
+        } else {
+          [self _runReaper];
+        }
       }];
     }];
   });
@@ -150,16 +148,14 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
 - (void)requestRelaunchWithCompletion:(EXUpdatesAppControllerRelaunchCompletionBlock)completion
 {
   if (_bridge) {
-    EXUpdatesAppLauncherWithDatabase *launcher = [[EXUpdatesAppLauncherWithDatabase alloc] init];
+    EXUpdatesAppLauncherWithDatabase *launcher = [[EXUpdatesAppLauncherWithDatabase alloc] initWithCompletionQueue:_controllerQueue];
     _candidateLauncher = launcher;
     [launcher launchUpdateWithSelectionPolicy:self->_selectionPolicy completion:^(NSError * _Nullable error, BOOL success) {
       if (success) {
-        dispatch_async(self->_controllerQueue, ^{
-          self->_launcher = self->_candidateLauncher;
-          completion(YES);
-          [self->_bridge reload];
-          [self _runReaper];
-        });
+        self->_launcher = self->_candidateLauncher;
+        completion(YES);
+        [self->_bridge reload];
+        [self _runReaper];
       } else {
         NSLog(@"Failed to relaunch: %@", error.localizedDescription);
         completion(NO);
@@ -223,7 +219,7 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
 {
   [EXUpdatesAppLauncherWithDatabase launchableUpdateWithSelectionPolicy:_selectionPolicy completion:^(NSError * _Nullable error, EXUpdatesUpdate * _Nullable launchableUpdate) {
     if ([self->_selectionPolicy shouldLoadNewUpdate:[EXUpdatesEmbeddedAppLoader embeddedManifest] withLaunchedUpdate:launchableUpdate]) {
-      self->_embeddedAppLoader = [[EXUpdatesEmbeddedAppLoader alloc] init];
+      self->_embeddedAppLoader = [[EXUpdatesEmbeddedAppLoader alloc] initWithCompletionQueue:self->_controllerQueue];
       [self->_embeddedAppLoader loadUpdateFromEmbeddedManifestWithSuccess:^(EXUpdatesUpdate * _Nullable update) {
         completion();
       } error:^(NSError * _Nonnull error) {
@@ -232,19 +228,19 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
     } else {
       completion();
     }
-  }];
+  } completionQueue:_controllerQueue];
 }
 
 - (void)_launchWithCompletion:(void (^)(NSError * _Nullable error, BOOL success))completion
 {
-  EXUpdatesAppLauncherWithDatabase *launcher = [[EXUpdatesAppLauncherWithDatabase alloc] init];
+  EXUpdatesAppLauncherWithDatabase *launcher = [[EXUpdatesAppLauncherWithDatabase alloc] initWithCompletionQueue:_controllerQueue];
   _launcher = launcher;
   [launcher launchUpdateWithSelectionPolicy:_selectionPolicy completion:completion];
 }
 
 - (void)_loadRemoteUpdateWithCompletion:(void (^)(NSError * _Nullable error, EXUpdatesUpdate * _Nullable update))completion
 {
-  _remoteAppLoader = [[EXUpdatesRemoteAppLoader alloc] init];
+  _remoteAppLoader = [[EXUpdatesRemoteAppLoader alloc] initWithCompletionQueue:_controllerQueue];
   [_remoteAppLoader loadUpdateFromUrl:[EXUpdatesConfig sharedInstance].updateUrl success:^(EXUpdatesUpdate * _Nullable update) {
     completion(nil, update);
   } error:^(NSError *error) {
@@ -266,20 +262,18 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
 
     if (update) {
       if (!self->_hasLaunched) {
-        EXUpdatesAppLauncherWithDatabase *launcher = [[EXUpdatesAppLauncherWithDatabase alloc] init];
+        EXUpdatesAppLauncherWithDatabase *launcher = [[EXUpdatesAppLauncherWithDatabase alloc] initWithCompletionQueue:self->_controllerQueue];
         self->_candidateLauncher = launcher;
         [launcher launchUpdateWithSelectionPolicy:self->_selectionPolicy completion:^(NSError * _Nullable error, BOOL success) {
-          dispatch_async(self->_controllerQueue, ^{
-            if (success) {
-              if (!self->_hasLaunched) {
-                self->_launcher = self->_candidateLauncher;
-                [self _maybeFinish];
-              }
-            } else {
+          if (success) {
+            if (!self->_hasLaunched) {
+              self->_launcher = self->_candidateLauncher;
               [self _maybeFinish];
-              NSLog(@"Downloaded update but failed to relaunch: %@", error.localizedDescription);
             }
-          });
+          } else {
+            [self _maybeFinish];
+            NSLog(@"Downloaded update but failed to relaunch: %@", error.localizedDescription);
+          }
         }];
       } else {
         [EXUpdatesUtils sendEventToBridge:self->_bridge

@@ -89,7 +89,7 @@ UM_EXPORT_METHOD_AS(fetchUpdateAsync,
     return;
   }
 
-  EXUpdatesRemoteAppLoader *remoteAppLoader = [[EXUpdatesRemoteAppLoader alloc] init];
+  EXUpdatesRemoteAppLoader *remoteAppLoader = [[EXUpdatesRemoteAppLoader alloc] initWithCompletionQueue:self.methodQueue];
   [remoteAppLoader loadUpdateFromUrl:[EXUpdatesConfig sharedInstance].updateUrl success:^(EXUpdatesUpdate * _Nullable update) {
     if (update) {
       resolve(@{

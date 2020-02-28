@@ -18,13 +18,15 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, strong) NSLock *arrayLock;
 
+@property (nonatomic, strong) dispatch_queue_t completionQueue;
+
 @end
 
 static NSString * const kEXUpdatesAppLoaderErrorDomain = @"EXUpdatesAppLoader";
 
 @implementation EXUpdatesAppLoader
 
-- (instancetype)init
+- (instancetype)initWithCompletionQueue:(dispatch_queue_t)completionQueue
 {
   if (self = [super init]) {
     _assetsToLoad = [NSMutableArray new];
@@ -32,6 +34,7 @@ static NSString * const kEXUpdatesAppLoaderErrorDomain = @"EXUpdatesAppLoader";
     _finishedAssets = [NSMutableArray new];
     _existingAssets = [NSMutableArray new];
     _arrayLock = [[NSLock alloc] init];
+    _completionQueue = completionQueue;
   }
   return self;
 }
@@ -79,7 +82,7 @@ static NSString * const kEXUpdatesAppLoaderErrorDomain = @"EXUpdatesAppLoader";
 
     if (existingUpdate && existingUpdate.status == EXUpdatesUpdateStatusReady) {
       if (self->_successBlock) {
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        dispatch_async(self->_completionQueue, ^{
           self->_successBlock(updateManifest);
         });
       }
@@ -100,20 +103,16 @@ static NSString * const kEXUpdatesAppLoaderErrorDomain = @"EXUpdatesAppLoader";
       [database addUpdate:self->_updateManifest error:&updateError];
 
       if (updateError) {
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-          [self _finishWithError:updateError];
-        });
+        [self _finishWithError:updateError];
         return;
       }
     }
 
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-      self->_assetsToLoad = [self->_updateManifest.assets mutableCopy];
+    self->_assetsToLoad = [self->_updateManifest.assets mutableCopy];
 
-      for (EXUpdatesAsset *asset in self->_updateManifest.assets) {
-        [self downloadAsset:asset];
-      }
-    });
+    for (EXUpdatesAsset *asset in self->_updateManifest.assets) {
+      [self downloadAsset:asset];
+    }
   });
 }
 
@@ -169,10 +168,12 @@ static NSString * const kEXUpdatesAppLoaderErrorDomain = @"EXUpdatesAppLoader";
 
 - (void)_finishWithError:(NSError *)error
 {
-  if (_errorBlock) {
-    _errorBlock(error);
-  }
-  [self _reset];
+  dispatch_async(_completionQueue, ^{
+    if (self->_errorBlock) {
+      self->_errorBlock(error);
+    }
+    [self _reset];
+  });
 }
 
 - (void)_finish
@@ -199,9 +200,7 @@ static NSString * const kEXUpdatesAppLoaderErrorDomain = @"EXUpdatesAppLoader";
     [database addNewAssets:self->_finishedAssets toUpdateWithId:self->_updateManifest.updateId error:&assetError];
     if (assetError) {
       [self->_arrayLock unlock];
-      dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [self _finishWithError:assetError];
-      });
+      [self _finishWithError:assetError];
       return;
     }
 
@@ -210,27 +209,34 @@ static NSString * const kEXUpdatesAppLoaderErrorDomain = @"EXUpdatesAppLoader";
       [database markUpdateReadyWithId:self->_updateManifest.updateId error:&updateReadyError];
       if (updateReadyError) {
         [self->_arrayLock unlock];
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-          [self _finishWithError:updateReadyError];
-        });
+        [self _finishWithError:updateReadyError];
         return;
       }
     }
 
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-      if (self->_erroredAssets.count) {
-        if (self->_errorBlock) {
-          self->_errorBlock([NSError errorWithDomain:kEXUpdatesAppLoaderErrorDomain
-                                                code:1012
-                                            userInfo:@{NSLocalizedDescriptionKey: @"Failed to load all assets"}]);
-        }
-      } else {
-        if (self->_successBlock) {
-          self->_successBlock(self->_updateManifest);
-        }
-      }
+    EXUpdatesAppLoaderSuccessBlock successBlock;
+    EXUpdatesAppLoaderErrorBlock errorBlock;
 
-      [self->_arrayLock unlock];
+    if (self->_erroredAssets.count) {
+      if (self->_errorBlock) {
+        errorBlock = self->_errorBlock;
+      }
+    } else {
+      if (self->_successBlock) {
+        successBlock = self->_successBlock;
+      }
+    }
+
+    [self->_arrayLock unlock];
+
+    dispatch_async(self->_completionQueue, ^{
+      if (errorBlock) {
+        errorBlock([NSError errorWithDomain:kEXUpdatesAppLoaderErrorDomain
+                                       code:1012
+                                   userInfo:@{NSLocalizedDescriptionKey: @"Failed to load all assets"}]);
+      } else if (successBlock) {
+        successBlock(self->_updateManifest);
+      }
       [self _reset];
     });
   });

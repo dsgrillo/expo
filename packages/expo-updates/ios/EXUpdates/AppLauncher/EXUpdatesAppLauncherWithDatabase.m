@@ -17,6 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, strong) EXUpdatesFileDownloader *downloader;
 @property (nonatomic, copy) EXUpdatesAppLauncherCompletionBlock completion;
+@property (nonatomic, strong) dispatch_queue_t completionQueue;
 
 @property (nonatomic, strong) dispatch_queue_t launcherQueue;
 @property (nonatomic, assign) NSUInteger completedAssets;
@@ -29,23 +30,25 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
 
 @implementation EXUpdatesAppLauncherWithDatabase
 
-- (instancetype)init
+- (instancetype)initWithCompletionQueue:(dispatch_queue_t)completionQueue
 {
   if (self = [super init]) {
     _launcherQueue = dispatch_queue_create("expo.launcher.LauncherQueue", DISPATCH_QUEUE_SERIAL);
     _completedAssets = 0;
+    _completionQueue = completionQueue;
   }
   return self;
 }
 
 + (void)launchableUpdateWithSelectionPolicy:(id<EXUpdatesSelectionPolicy>)selectionPolicy
                                  completion:(EXUpdatesAppLauncherUpdateCompletionBlock)completion
+                            completionQueue:(dispatch_queue_t)completionQueue
 {
   EXUpdatesDatabase *database = [EXUpdatesAppController sharedInstance].database;
   dispatch_async(database.databaseQueue, ^{
     NSError *error;
     NSArray<EXUpdatesUpdate *> *launchableUpdates = [database launchableUpdatesWithError:&error];
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    dispatch_async(completionQueue, ^{
       if (!launchableUpdates) {
         completion(error, nil);
       }
@@ -70,7 +73,7 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
         self->_launchedUpdate = launchableUpdate;
         [self _ensureAllAssetsExist];
       }
-    }];
+    } completionQueue:_launcherQueue];
   } else {
     [self _ensureAllAssetsExist];
   }
@@ -98,7 +101,7 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
         }
 
         if (self->_completedAssets == totalAssetCount) {
-          dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+          dispatch_async(self->_completionQueue, ^{
             self->_completion(self->_launchAssetError, self->_launchAssetUrl != nil);
             self->_completion = nil;
           });

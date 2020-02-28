@@ -10,11 +10,14 @@ typedef void (^EXUpdatesAppLauncherUpdateCompletionBlock)(NSError * _Nullable er
 
 @interface EXUpdatesAppLauncherWithDatabase : NSObject <EXUpdatesAppLauncher>
 
+- (instancetype)initWithCompletionQueue:(dispatch_queue_t)completionQueue;
+
 - (void)launchUpdateWithSelectionPolicy:(id<EXUpdatesSelectionPolicy>)selectionPolicy
                              completion:(EXUpdatesAppLauncherCompletionBlock)completion;
 
 + (void)launchableUpdateWithSelectionPolicy:(id<EXUpdatesSelectionPolicy>)selectionPolicy
-                                 completion:(EXUpdatesAppLauncherUpdateCompletionBlock)completion;
+                                 completion:(EXUpdatesAppLauncherUpdateCompletionBlock)completion
+                            completionQueue:(dispatch_queue_t)completionQueue;
 
 @end
 
