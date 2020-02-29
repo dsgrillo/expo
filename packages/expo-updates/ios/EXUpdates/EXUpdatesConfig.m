@@ -62,7 +62,12 @@ static NSString * const kEXUpdatesDefaultReleaseChannelName = @"default";
   id launchWaitMs = config[@"launchWaitMs"];
   if (launchWaitMs && [launchWaitMs isKindOfClass:[NSNumber class]]) {
     _launchWaitMs = (NSNumber *)launchWaitMs;
-  } else {
+  } else if (launchWaitMs && [launchWaitMs isKindOfClass:[NSString class]]) {
+    NSNumberFormatter *formatter = [[NSNumberFormatter alloc] init];
+    formatter.numberStyle = NSNumberFormatterNoStyle;
+    _launchWaitMs = [formatter numberFromString:(NSString *)launchWaitMs];
+  }
+  if (!_launchWaitMs) {
     _launchWaitMs = @(0);
   }
 
