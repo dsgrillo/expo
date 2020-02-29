@@ -125,7 +125,9 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
         return;
       }
 
-      NSLog(@"Error copying embedded asset with URL %@: %@", asset.url.absoluteString, error.localizedDescription);
+      if (error) {
+        NSLog(@"Error copying embedded asset with URL %@: %@", asset.url.absoluteString, error.localizedDescription);
+      }
 
       [self _downloadAsset:asset withLocalUrl:assetLocalUrl completion:^(NSError * _Nullable error, EXUpdatesAsset *asset, NSURL *assetLocalUrl) {
         if (error) {
@@ -188,8 +190,11 @@ static NSString * const kEXUpdatesAppLauncherErrorDomain = @"AppLauncher";
           completion(success, error);
         });
       });
+      return;
     }
   }
+  
+  completion(NO, nil);
 }
 
 - (void)_downloadAsset:(EXUpdatesAsset *)asset
