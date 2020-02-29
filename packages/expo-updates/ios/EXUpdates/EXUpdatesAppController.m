@@ -90,47 +90,45 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
     dispatch_semaphore_signal(dbSemaphore);
   });
 
-  dispatch_async(_controllerQueue, ^{
-    BOOL shouldCheckForUpdate = [EXUpdatesUtils shouldCheckForUpdate];
-    NSNumber *launchWaitMs = [EXUpdatesConfig sharedInstance].launchWaitMs;
-    if ([launchWaitMs isEqualToNumber:@(0)] || !shouldCheckForUpdate) {
-      self->_isTimerFinished = YES;
-    } else {
-      NSDate *fireDate = [NSDate dateWithTimeIntervalSinceNow:[launchWaitMs doubleValue] / 1000];
-      self->_timer = [[NSTimer alloc] initWithFireDate:fireDate interval:0 target:self selector:@selector(_timerDidFire) userInfo:nil repeats:NO];
-      [[NSRunLoop currentRunLoop] addTimer:self->_timer forMode:NSDefaultRunLoopMode];
-    }
+  BOOL shouldCheckForUpdate = [EXUpdatesUtils shouldCheckForUpdate];
+  NSNumber *launchWaitMs = [EXUpdatesConfig sharedInstance].launchWaitMs;
+  if ([launchWaitMs isEqualToNumber:@(0)] || !shouldCheckForUpdate) {
+    self->_isTimerFinished = YES;
+  } else {
+    NSDate *fireDate = [NSDate dateWithTimeIntervalSinceNow:[launchWaitMs doubleValue] / 1000];
+    self->_timer = [[NSTimer alloc] initWithFireDate:fireDate interval:0 target:self selector:@selector(_timerDidFire) userInfo:nil repeats:NO];
+    [[NSRunLoop mainRunLoop] addTimer:self->_timer forMode:NSDefaultRunLoopMode];
+  }
 
-    dispatch_semaphore_wait(dbSemaphore, DISPATCH_TIME_FOREVER);
-    if (!dbSuccess) {
-      if (self->_timer) {
-        [self->_timer invalidate];
+  dispatch_semaphore_wait(dbSemaphore, DISPATCH_TIME_FOREVER);
+  if (!dbSuccess) {
+    if (self->_timer) {
+      [self->_timer invalidate];
+    }
+    [self _emergencyLaunchWithFatalError:dbError];
+    return;
+  }
+
+  [self _loadEmbeddedUpdateWithCompletion:^{
+    [self _launchWithCompletion:^(NSError * _Nullable error, BOOL success) {
+      if (!success) {
+        [self _emergencyLaunchWithFatalError:error ?: [NSError errorWithDomain:kEXUpdatesAppControllerErrorDomain
+                                                                     code:1010
+                                                                 userInfo:@{NSLocalizedDescriptionKey: @"Failed to find or load launch asset"}]];
+      } else {
+        self->_isReadyToLaunch = YES;
+        [self _maybeFinish];
       }
-      [self _emergencyLaunchWithFatalError:dbError];
-      return;
-    }
 
-    [self _loadEmbeddedUpdateWithCompletion:^{
-      [self _launchWithCompletion:^(NSError * _Nullable error, BOOL success) {
-        if (!success) {
-          [self _emergencyLaunchWithFatalError:error ?: [NSError errorWithDomain:kEXUpdatesAppControllerErrorDomain
-                                                                       code:1010
-                                                                   userInfo:@{NSLocalizedDescriptionKey: @"Failed to find or load launch asset"}]];
-        } else {
-          self->_isReadyToLaunch = YES;
-          [self _maybeFinish];
-        }
-
-        if (shouldCheckForUpdate) {
-          [self _loadRemoteUpdateWithCompletion:^(NSError * _Nullable error, EXUpdatesUpdate * _Nullable update) {
-            [self _handleRemoteUpdateLoaded:update error:error];
-          }];
-        } else {
-          [self _runReaper];
-        }
-      }];
+      if (shouldCheckForUpdate) {
+        [self _loadRemoteUpdateWithCompletion:^(NSError * _Nullable error, EXUpdatesUpdate * _Nullable update) {
+          [self _handleRemoteUpdateLoaded:update error:error];
+        }];
+      } else {
+        [self _runReaper];
+      }
     }];
-  });
+  }];
 }
 
 - (void)startAndShowLaunchScreen:(UIWindow *)window
@@ -286,11 +284,14 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
             [self _maybeFinish];
             NSLog(@"Downloaded update but failed to relaunch: %@", error.localizedDescription);
           }
+
+          [self _runReaper];
         }];
       } else {
         [EXUpdatesUtils sendEventToBridge:self->_bridge
                                  withType:kEXUpdatesUpdateAvailableEventName
                                      body:@{@"manifest": update.rawManifest}];
+        [self _runReaper];
       }
     } else {
       // there's no update, so signal we're ready to launch
@@ -302,9 +303,9 @@ static NSString * const kEXUpdatesAppControllerErrorDomain = @"EXUpdatesAppContr
       } else {
         [EXUpdatesUtils sendEventToBridge:self->_bridge withType:kEXUpdatesNoUpdateAvailableEventName body:@{}];
       }
-    }
 
-    [self _runReaper];
+      [self _runReaper];
+    }
   });
 }
 

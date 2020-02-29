@@ -59,7 +59,7 @@ NS_ASSUME_NONNULL_BEGIN
           deletedAssets++;
         }
       }
-      NSLog(@"Deleted %lu assets from disk in %f ms", deletedAssets, [beginDeleteAssets timeIntervalSinceNow] * -1000);
+      NSLog(@"Deleted %lu assets from disk in %f ms", (unsigned long)deletedAssets, [beginDeleteAssets timeIntervalSinceNow] * -1000);
 
       NSDate *beginRetryDeletes = [NSDate date];
       // retry errored deletions
